@@ -1,25 +1,46 @@
 /*
-  小红书无水印高性能精简版 (图片原图 + LivePhoto + 视频无水印 + 去广告)
+  小红书无水印与解锁终极修复版 (点亮限制下载 + 视频/图片/LivePhoto无水印)
 */
 
 const url = $request.url;
 if (!$response.body) $done({});
 let obj = JSON.parse($response.body);
 
-// 提取播放器原原生无水印视频流 (优先 h265 最高清，兜底 h264)
+// 通用提取视频无水印播放流 (优先 h265 最高清，兜底 h264)
 function getCleanVideoUrl(item) {
-  const stream = item?.video_info_v2?.media?.stream;
+  const stream = item?.video_info_v2?.media?.stream || item?.video_info?.media?.stream || item?.media?.stream;
   if (!stream) return "";
-  return (
-    stream?.h265?.[0]?.master_url ||
-    stream?.h264?.[0]?.master_url ||
-    stream?.h265?.[0]?.backup_urls?.[0] ||
-    stream?.h264?.[0]?.backup_urls?.[0] ||
-    ""
-  );
+  const h265List = stream?.h265 || [];
+  const h264List = stream?.h264 || [];
+
+  for (let s of h265List) {
+    if (s?.master_url) return s.master_url;
+    if (s?.backup_urls?.[0]) return s.backup_urls[0];
+  }
+  for (let s of h264List) {
+    if (s?.master_url) return s.master_url;
+    if (s?.backup_urls?.[0]) return s.backup_urls[0];
+  }
+  return "";
 }
 
-// 1. 评论区实况照片
+// 兼容提取不同 API 下的笔记平铺数组（解决 obj.data[0].note_list 嵌套 Bug）
+function getNoteItems(obj) {
+  if (!obj || !obj.data) return [];
+  if (Array.isArray(obj.data)) {
+    if (obj.data[0]?.note_list && Array.isArray(obj.data[0].note_list)) {
+      return obj.data[0].note_list;
+    }
+    return obj.data;
+  }
+  if (typeof obj.data === "object") {
+    if (Array.isArray(obj.data.note_list)) return obj.data.note_list;
+    if (Array.isArray(obj.data.items)) return obj.data.items;
+  }
+  return [];
+}
+
+// 1. 评论区实况照片保存
 if (url.includes("/v1/interaction/comment/video/download")) {
   let commitsCache = JSON.parse($persistentStore.read("redBookCommentLivePhoto") || "null");
   if (commitsCache?.livePhotos?.length > 0 && obj?.data?.video) {
@@ -31,49 +52,50 @@ if (url.includes("/v1/interaction/comment/video/download")) {
     }
   }
 } 
-// 2. 笔记/图文/视频 信息流 (无水印提取与开关处理)
-else if (/\/v\d+\/note\/(imagefeed|feed)/.test(url) || /\/v\d+\/note\/videofeed/.test(url) || url.includes("/v6/homefeed")) {
+// 2. 笔记详情 / 首页信息流 / 视频流 (核心逻辑：解锁开关 + 提取无水印地址)
+else if (
+  /\/v\d+\/note\/(imagefeed|feed)/.test(url) || 
+  /\/v\d+\/note\/videofeed/.test(url) || 
+  url.includes("/v6/homefeed") || 
+  url.includes("/v10/search/notes")
+) {
   let livePhotoDatas = [];
   let videoDatas = [];
-  let modItems = [];
+  let list = getNoteItems(obj);
 
-  let list = Array.isArray(obj?.data) ? obj.data : (obj?.data?.[0]?.note_list || obj?.data?.items);
-
-  if (list?.length > 0) {
+  if (list.length > 0) {
     for (let item of list) {
-      // 去广告：跳过带 ad 或带货的节点
-      if (item?.ad || item.hasOwnProperty("ads_info") || item?.model_type === "live_v2") {
-        continue;
-      }
+      if (!item || typeof item !== "object") continue;
 
-      // 解锁去水印控制开关
-      if (item?.media_save_config) {
-        item.media_save_config.disable_save = false;
-        item.media_save_config.disable_watermark = true;
-        item.media_save_config.disable_weibo_cover = true;
-      }
+      // 强制去水印控制位
+      if (!item.media_save_config) item.media_save_config = {};
+      item.media_save_config.disable_save = false;
+      item.media_save_config.disable_watermark = true;
+      item.media_save_config.disable_weibo_cover = true;
 
-      // 强行开启被作者禁止的视频下载按钮
-      if (item?.function_switch?.length > 0) {
-        for (let f of item.function_switch) {
-          if (f?.type === "video_download") {
-            f.enable = true;
-            delete f.reason;
-          }
+      // 强行开启并点亮被作者限制的下载按钮
+      if (!Array.isArray(item.function_switch)) item.function_switch = [];
+      ["video_download", "image_download"].forEach((t) => {
+        let f = item.function_switch.find((x) => x?.type === t);
+        if (f) {
+          f.enable = true;
+          delete f.reason;
+        } else {
+          item.function_switch.push({ type: t, enable: true });
         }
-      }
+      });
 
-      // 提取视频纯净直链 (匹配你的视频 JSON)
+      // 抓取视频无水印直链
       let vUrl = getCleanVideoUrl(item);
       let noteId = item?.id || item?.note_id;
       if (noteId && vUrl) {
         videoDatas.push({ id: noteId, url: vUrl });
       }
 
-      // 提取图片高清原图与 Live Photo
-      if (item?.images_list?.length > 0) {
+      // 图片超清原图与 Live Photo 视频流
+      if (Array.isArray(item.images_list)) {
         for (let i of item.images_list) {
-          if (i?.original) i.url = i.original; // 替换为无损原图
+          if (i?.original) i.url = i.original;
           if (i?.live_photo_file_id && i?.live_photo?.media) {
             let lpUrl = getCleanVideoUrl(i.live_photo);
             if (lpUrl) {
@@ -86,14 +108,9 @@ else if (/\/v\d+\/note\/(imagefeed|feed)/.test(url) || /\/v\d+\/note\/videofeed/
           }
         }
       }
-
-      modItems.push(item);
     }
 
-    // 重写数组数据 (完成去广告)
-    if (Array.isArray(obj?.data)) obj.data = modItems;
-
-    // 轻量级缓存（仅维护最近 50 条）
+    // 更新持久化缓存
     if (livePhotoDatas.length > 0) {
       let oldLive = JSON.parse($persistentStore.read("redBookLivePhoto") || "[]");
       $persistentStore.write(JSON.stringify(livePhotoDatas.concat(oldLive).slice(0, 50)), "redBookLivePhoto");
@@ -119,23 +136,23 @@ else if (/\/v\d+\/note\/live_photo\/save/.test(url)) {
     obj = { code: 0, success: true, msg: "成功", data: { datas: livePhoto } };
   }
 } 
-// 4. 视频点击保存接口：把服务器返回的带水印链接替换为刚才捕获到的 master_url 纯净流
+// 4. 点击保存视频接口：替换为刚才捕获到的 master_url
 else if (/\/v\d+\/note\/video\/save/.test(url)) {
   let videoFeed = JSON.parse($persistentStore.read("redBookVideoFeed") || "[]");
   let noteId = obj?.data?.note_id || obj?.data?.id;
   if (noteId && videoFeed.length > 0) {
     let cached = videoFeed.find((i) => i.id === noteId);
     if (cached?.url) {
-      obj.data.download_url = cached.url; // 核心：替换为纯净无水印直链
+      obj.data.download_url = cached.url; // 强行替换为无水印原始 MP4 地址
     }
   }
-  if (obj?.data?.disable) {
-    delete obj.data.disable;
-    delete obj.data.msg;
-    obj.data.status = 2; // 顺便解锁作者限制下载
+  if (obj?.data) {
+    if (obj.data.disable) delete obj.data.disable;
+    if (obj.data.msg) delete obj.data.msg;
+    obj.data.status = 2; // 标记成功
   }
 } 
-// 5. 杂项与 UI 去广告
+// 5. 基础去广告
 else if (url.includes("/v1/system_service/config")) {
   const item = ["app_theme", "loading_img", "splash", "store"];
   if (obj?.data) for (let i of item) delete obj.data[i];
