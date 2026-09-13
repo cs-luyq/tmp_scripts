@@ -1,7 +1,7 @@
 #!name = 小红书修复版
 #!desc = 移除广告、去水印、加载高清原图、破解视频/实况照片保存
 #!author = space
-#!icon = https://raw.githubusercontent.com/Orz-3/mini/master/Color/redbook.png
+#!icon = https://raw.githubusercontent.com/luestr/IconResource/blob/main/App_icon/120px/RedPaper.png
 
 [MitM]
 hostname = edith.xiaohongshu.com, *.xiaohongshu.com, edith.rnote.com, *.rnote.com
