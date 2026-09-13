@@ -7,4 +7,4 @@
 hostname = edith.xiaohongshu.com, *.xiaohongshu.com, edith.rnote.com, *.rnote.com
 
 [Script]
-http-response ^https?:\/\/edith\.(xiaohongshu\.com|rnote\.com)\/api\/sns\/ script-path=https://raw.githubusercontent.com/cs-luyq/tmp_scripts/main/xhs_full.js?v=1.0.5, requires-body=true, tag=小红书全功能修复
+http-response ^https?:\/\/edith\.(xiaohongshu\.com|rnote\.com)\/api\/sns\/ script-path=https://raw.githubusercontent.com/cs-luyq/tmp_scripts/main/xhs_full.js?v=1.0.6, requires-body=true, tag=小红书全功能修复
